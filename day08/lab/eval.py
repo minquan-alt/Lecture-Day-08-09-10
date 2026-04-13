@@ -30,7 +30,7 @@ from rag_answer import rag_answer
 # CẤU HÌNH
 # =============================================================================
 
-TEST_QUESTIONS_PATH = Path(__file__).parent / "data" / "testset.json"
+TEST_QUESTIONS_PATH = Path(__file__).parent / "data" / "final_test_data.json"
 RESULTS_DIR = Path(__file__).parent / "results"
 
 # Cấu hình baseline (Sprint 2)
@@ -47,8 +47,13 @@ BASELINE_CONFIG = {
 # Hybrid retrieval + rerank
 # top_k_search = 10, top_k_select = 3
 
+# Hybrid retrieval + rerank
+# top_k_search = 10, top_k_select = 3
+
 VARIANT_CONFIG = {
     "retrieval_mode": "hybrid",   # Hoặc "dense" nếu chỉ đổi rerank
+    "top_k_search": 11,
+    "top_k_select": 4,
     "top_k_search": 11,
     "top_k_select": 4,
     "use_rerank": True,           # Hoặc False nếu variant là hybrid không rerank
@@ -62,26 +67,65 @@ VARIANT_CONFIG = {
 # =============================================================================
 
 
-def _build_openrouter_client():
+def _normalize_openrouter_base_url(raw_url: Optional[str]) -> str:
+    url = (raw_url or "https://openrouter.ai/api/v1").rstrip("/")
+    if "openrouter.ai" in url and not url.endswith("/api/v1"):
+        return f"{url}/api/v1"
+    return url
+
+
+def _choose_eval_provider(model: str) -> str:
+    explicit = (os.getenv("EVAL_PROVIDER") or "").strip().lower()
+    if explicit in {"openai", "openrouter", "ollama"}:
+        return explicit
+
+    m = (model or "").strip().lower()
+    # OpenRouter models often use provider/model format or :free suffix.
+    if "/" in m or ":free" in m:
+        return "openrouter"
+    return "openai"
+
+
+def _build_judge_client(provider: str):
     from openai import OpenAI
 
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    if provider == "ollama":
+        base_url = (os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434").rstrip("/")
+        if not base_url.endswith("/v1"):
+            base_url = f"{base_url}/v1"
+        return OpenAI(api_key=os.getenv("OLLAMA_API_KEY", "ollama"), base_url=base_url)
+
+    if provider == "openrouter":
+        api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENROUTER_API_KEY is missing")
+        base_url = _normalize_openrouter_base_url(
+            os.getenv("OPENROUTER_BASE_URL") or os.getenv("BASE_URL")
+        )
+        return OpenAI(api_key=api_key, base_url=base_url)
+
+    # Default to OpenAI API.
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is missing")
-
-    base_url = os.getenv("OPENROUTER_BASE_URL") or os.getenv("BASE_URL") or "https://openrouter.ai/api/v1"
-    base_url = base_url.rstrip("/")
-    if "openrouter.ai" in base_url and not base_url.endswith("/api/v1"):
-        base_url = f"{base_url}/api/v1"
-
-    return OpenAI(api_key=api_key, base_url=base_url)
+        raise RuntimeError("OPENAI_API_KEY is missing")
+    openai_base_url = (os.getenv("OPENAI_BASE_URL") or "").strip()
+    if openai_base_url:
+        return OpenAI(api_key=api_key, base_url=openai_base_url.rstrip("/"))
+    return OpenAI(api_key=api_key)
 
 
 def _judge_with_openrouter(prompt: str, model: str) -> Dict[str, Any]:
     try:
-        client = _build_openrouter_client()
+        provider = _choose_eval_provider(model)
+        client = _build_judge_client(provider)
+
+        # Strip OpenRouter prefix when calling native OpenAI/Ollama endpoints.
+        resolved_model = model
+        if provider in {"openai", "ollama"} and "/" in model:
+            resolved_model = model.split("/", 1)[1]
+
         response = client.chat.completions.create(
-            model=model,
+            model=resolved_model,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )
@@ -396,7 +440,11 @@ def compare_ab(
         b_avg = sum(b_scores) / len(b_scores) if b_scores else None
         v_avg = sum(v_scores) / len(v_scores) if v_scores else None
         delta = (v_avg - b_avg) if (b_avg is not None and v_avg is not None) else None
+        delta = (v_avg - b_avg) if (b_avg is not None and v_avg is not None) else None
 
+        b_str = f"{b_avg:.2f}" if b_avg is not None else "N/A"
+        v_str = f"{v_avg:.2f}" if v_avg is not None else "N/A"
+        d_str = f"{delta:+.2f}" if delta is not None else "N/A"
         b_str = f"{b_avg:.2f}" if b_avg is not None else "N/A"
         v_str = f"{v_avg:.2f}" if v_avg is not None else "N/A"
         d_str = f"{delta:+.2f}" if delta is not None else "N/A"
@@ -487,23 +535,27 @@ Generated: {timestamp}
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("Sprint 4: Evaluation & Scorecard")
+    print("Sprint 4: Evaluation & Scorecard (Chạy 5 câu đầu)")
     print("=" * 60)
 
-    # Kiểm tra test questions
+    # 1. Load và giới hạn 5 câu đầu
     print(f"\nLoading test questions từ: {TEST_QUESTIONS_PATH}")
     try:
         with open(TEST_QUESTIONS_PATH, "r", encoding="utf-8") as f:
-            test_questions = json.load(f)
-        print(f"Tìm thấy {len(test_questions)} câu hỏi")
+            all_questions = json.load(f)
 
-        # In preview
-        for q in test_questions[:3]:
-            print(f"  [{q['id']}] {q['question']} ({q['category']})")
-        print("  ...")
+        # CHỈ LẤY 5 CÂU ĐẦU TẠI ĐÂY
+        test_questions = all_questions[:5]
+
+        print(f"Tìm thấy tổng cộng {len(all_questions)} câu hỏi.")
+        print(f">>> Chỉ thực hiện đánh giá cho {len(test_questions)} câu đầu tiên.")
+
+        # In preview 5 câu sẽ chạy
+        for q in test_questions:
+            print(f"  [{q['id']}] {q['question']}")
 
     except FileNotFoundError:
-        print("Không tìm thấy file test_questions.json!")
+        print("Không tìm thấy file câu hỏi!")
         test_questions = []
 
     # --- Chạy Baseline ---
