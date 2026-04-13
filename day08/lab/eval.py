@@ -30,7 +30,7 @@ from rag_answer import rag_answer
 # CẤU HÌNH
 # =============================================================================
 
-TEST_QUESTIONS_PATH = Path(__file__).parent / "data" / "testset.json"
+TEST_QUESTIONS_PATH = Path(__file__).parent / "data" / "final_test_data.json"
 RESULTS_DIR = Path(__file__).parent / "results"
 
 # Cấu hình baseline (Sprint 2)
@@ -62,26 +62,65 @@ VARIANT_CONFIG = {
 # =============================================================================
 
 
-def _build_openrouter_client():
+def _normalize_openrouter_base_url(raw_url: Optional[str]) -> str:
+    url = (raw_url or "https://openrouter.ai/api/v1").rstrip("/")
+    if "openrouter.ai" in url and not url.endswith("/api/v1"):
+        return f"{url}/api/v1"
+    return url
+
+
+def _choose_eval_provider(model: str) -> str:
+    explicit = (os.getenv("EVAL_PROVIDER") or "").strip().lower()
+    if explicit in {"openai", "openrouter", "ollama"}:
+        return explicit
+
+    m = (model or "").strip().lower()
+    # OpenRouter models often use provider/model format or :free suffix.
+    if "/" in m or ":free" in m:
+        return "openrouter"
+    return "openai"
+
+
+def _build_judge_client(provider: str):
     from openai import OpenAI
 
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    if provider == "ollama":
+        base_url = (os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434").rstrip("/")
+        if not base_url.endswith("/v1"):
+            base_url = f"{base_url}/v1"
+        return OpenAI(api_key=os.getenv("OLLAMA_API_KEY", "ollama"), base_url=base_url)
+
+    if provider == "openrouter":
+        api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENROUTER_API_KEY is missing")
+        base_url = _normalize_openrouter_base_url(
+            os.getenv("OPENROUTER_BASE_URL") or os.getenv("BASE_URL")
+        )
+        return OpenAI(api_key=api_key, base_url=base_url)
+
+    # Default to OpenAI API.
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is missing")
-
-    base_url = os.getenv("OPENROUTER_BASE_URL") or os.getenv("BASE_URL") or "https://openrouter.ai/api/v1"
-    base_url = base_url.rstrip("/")
-    if "openrouter.ai" in base_url and not base_url.endswith("/api/v1"):
-        base_url = f"{base_url}/api/v1"
-
-    return OpenAI(api_key=api_key, base_url=base_url)
+        raise RuntimeError("OPENAI_API_KEY is missing")
+    openai_base_url = (os.getenv("OPENAI_BASE_URL") or "").strip()
+    if openai_base_url:
+        return OpenAI(api_key=api_key, base_url=openai_base_url.rstrip("/"))
+    return OpenAI(api_key=api_key)
 
 
 def _judge_with_openrouter(prompt: str, model: str) -> Dict[str, Any]:
     try:
-        client = _build_openrouter_client()
+        provider = _choose_eval_provider(model)
+        client = _build_judge_client(provider)
+
+        # Strip OpenRouter prefix when calling native OpenAI/Ollama endpoints.
+        resolved_model = model
+        if provider in {"openai", "ollama"} and "/" in model:
+            resolved_model = model.split("/", 1)[1]
+
         response = client.chat.completions.create(
-            model=model,
+            model=resolved_model,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )
