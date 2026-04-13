@@ -72,3 +72,4 @@ day08/lab/reports/
 # Misc
 # =========================
 *.sqlite3
+__pycache__/
