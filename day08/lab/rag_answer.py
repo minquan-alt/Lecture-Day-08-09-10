@@ -76,6 +76,32 @@ def retrieve_dense(query: str, top_k: int = TOP_K_SEARCH) -> List[Dict[str, Any]
         # Lưu ý: distances trong ChromaDB cosine = 1 - similarity
         # Score = 1 - distance
     """
+    import chromadb
+    from index import get_embedding
+
+    client = chromadb.CloudClient(
+        api_key=os.getenv("CHROMA_API_KEY"),
+        tenant='500e56f0-ec41-4f7a-84a2-1fa6176134d4',
+        database='quang-ai'
+    )
+    collection = client.get_collection("lab_08")
+
+    query_embedding = get_embedding(query)
+    results = collection.query(
+        query_embeddings=[query_embedding],
+        n_results=top_k,
+        include=["documents", "metadatas", "distances"]
+    )
+    # Lưu ý: distances trong ChromaDB cosine = 1 - similarity
+    cosine = [1 - d for d in results["distances"][0]]
+    chunks = []
+    for text, meta, score in zip(results["documents"][0], results["metadatas"][0], cosine):
+        chunks.append({
+            "text": text,
+            "metadata": meta,
+            "score": score,
+        })
+    return chunks
     raise NotImplementedError(
         "TODO Sprint 2: Implement retrieve_dense().\n"
         "Tham khảo comment trong hàm để biết cách query ChromaDB."
@@ -316,6 +342,11 @@ def call_llm(prompt: str) -> str:
 
     Lưu ý: Dùng temperature=0 hoặc thấp để output ổn định cho evaluation.
     """
+    import google.generativeai as genai
+    genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+    model = genai.GenerativeModel("gemini-2.0-flash")
+    response = model.generate_content(prompt)
+    return response.text
     raise NotImplementedError(
         "TODO Sprint 2: Implement call_llm().\n"
         "Chọn Option A (OpenAI) hoặc Option B (Gemini) trong TODO comment."
