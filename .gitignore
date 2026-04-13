@@ -61,8 +61,6 @@ htmlcov/
 # Grading questions — không public trước 17:00
 day08/lab/data/grading_questions.json
 
-# Output / reports (nếu không cần push)
-day08/lab/reports/
 
 # Optional: data lớn (tuỳ bạn)
 # day08/lab/data/
