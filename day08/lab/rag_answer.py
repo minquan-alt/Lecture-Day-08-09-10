@@ -22,6 +22,8 @@ Definition of Done Sprint 3:
 """
 
 import os
+import re
+import hashlib
 from typing import List, Dict, Any, Optional, Tuple
 from dotenv import load_dotenv
 
@@ -135,10 +137,49 @@ def retrieve_sparse(query: str, top_k: int = TOP_K_SEARCH) -> List[Dict[str, Any
         scores = bm25.get_scores(tokenized_query)
         top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
     """
-    # TODO Sprint 3: Implement BM25 search
-    # Tạm thời return empty list
-    print("[retrieve_sparse] Chưa implement — Sprint 3")
-    return []
+    import chromadb
+    from rank_bm25 import BM25Okapi
+
+    def tokenize(text: str) -> List[str]:
+        return re.findall(r"\w+", (text or "").lower(), flags=re.UNICODE)
+
+    client = chromadb.CloudClient(
+        api_key=os.getenv("CHROMA_API_KEY"),
+        tenant="500e56f0-ec41-4f7a-84a2-1fa6176134d4",
+        database="quang-ai",
+    )
+    collection = client.get_collection("lab_08")
+
+    results = collection.get(include=["documents", "metadatas"])
+    documents = results.get("documents") or []
+    metadatas = results.get("metadatas") or []
+
+    if not documents:
+        return []
+
+    tokenized_corpus = [tokenize(doc) for doc in documents]
+    bm25 = BM25Okapi(tokenized_corpus)
+
+    tokenized_query = tokenize(query)
+    if not tokenized_query:
+        return []
+
+    scores = bm25.get_scores(tokenized_query)
+    top_indices = sorted(
+        range(len(scores)),
+        key=lambda i: scores[i],
+        reverse=True,
+    )[:top_k]
+
+    chunks: List[Dict[str, Any]] = []
+    for idx in top_indices:
+        chunks.append({
+            "text": documents[idx],
+            "metadata": metadatas[idx] if idx < len(metadatas) else {},
+            "score": float(scores[idx]),
+        })
+
+    return chunks
 
 
 # =============================================================================
@@ -174,10 +215,56 @@ def retrieve_hybrid(
     - Corpus có cả câu tự nhiên VÀ tên riêng, mã lỗi, điều khoản
     - Query như "Approval Matrix" khi doc đổi tên thành "Access Control SOP"
     """
-    # TODO Sprint 3: Implement hybrid RRF
-    # Tạm thời fallback về dense
-    print("[retrieve_hybrid] Chưa implement RRF — fallback về dense")
-    return retrieve_dense(query, top_k)
+    dense_results = retrieve_dense(query, top_k=top_k)
+    sparse_results = retrieve_sparse(query, top_k=top_k)
+
+    def build_doc_key(chunk: Dict[str, Any]) -> str:
+        """Create a stable key to merge dense/sparse hits that refer to the same chunk."""
+        meta = chunk.get("metadata", {}) or {}
+        source = str(meta.get("source", ""))
+        section = str(meta.get("section", ""))
+        text = str(chunk.get("text", ""))
+        fingerprint = hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+        return f"{source}|{section}|{fingerprint}"
+
+    merged: Dict[str, Dict[str, Any]] = {}
+
+    for rank, chunk in enumerate(dense_results, 1):
+        doc_key = build_doc_key(chunk)
+        merged[doc_key] = {
+            "chunk": chunk,
+            "dense_rank": rank,
+            "sparse_rank": None,
+        }
+
+    for rank, chunk in enumerate(sparse_results, 1):
+        doc_key = build_doc_key(chunk)
+        if doc_key in merged:
+            merged[doc_key]["sparse_rank"] = rank
+        else:
+            merged[doc_key] = {
+                "chunk": chunk,
+                "dense_rank": None,
+                "sparse_rank": rank,
+            }
+
+    for info in merged.values():
+        dense_rank = info["dense_rank"] if info["dense_rank"] is not None else 999
+        sparse_rank = info["sparse_rank"] if info["sparse_rank"] is not None else 999
+        info["rrf_score"] = (
+            dense_weight * (1 / (60 + dense_rank))
+            + sparse_weight * (1 / (60 + sparse_rank))
+        )
+
+    ranked = sorted(merged.values(), key=lambda x: x["rrf_score"], reverse=True)
+
+    hybrid_results: List[Dict[str, Any]] = []
+    for info in ranked[:top_k]:
+        chunk = dict(info["chunk"])
+        chunk["score"] = info["rrf_score"]
+        hybrid_results.append(chunk)
+
+    return hybrid_results
 
 
 # =============================================================================
