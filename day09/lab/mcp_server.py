@@ -32,6 +32,9 @@ import os
 import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 # ─────────────────────────────────────────────
@@ -140,17 +143,61 @@ def tool_search_kb(query: str, top_k: int = 3) -> dict:
     Hiện tại: Delegate sang retrieval worker.
     """
     try:
-        # Tái dùng retrieval logic từ workers/retrieval.py
-        import sys
-        sys.path.insert(0, os.path.dirname(__file__))
-        from workers.retrieval import retrieve_dense
-        chunks = retrieve_dense(query, top_k=top_k)
+        # # Tái dùng retrieval logic từ workers/retrieval.py
+        # import sys
+        # sys.path.insert(0, os.path.dirname(__file__))
+        # from workers.retrieval import retrieve_dense
+        # chunks = retrieve_dense(query, top_k=top_k)
+        # sources = list({c["source"] for c in chunks})
+        # return {
+        #     "chunks": chunks,
+        #     "sources": sources,
+        #     "total_found": len(chunks),
+        # }
+
+        # Kết nối trực tiếp đến ChromaDB
+        import chromadb
+        client = chromadb.CloudClient(
+            api_key=os.getenv("CHROMA_API_KEY"),
+            tenant=os.getenv("CHROMA_TENANT"),
+            database=os.getenv("CHROMA_DATABASE")
+        )
+        collection = client.get_collection(os.getenv("CHROMA_COLLECTION"))
+
+        try:
+            from sentence_transformers import SentenceTransformer
+            model = SentenceTransformer("google/embeddinggemma-300m")
+
+            def embed(text: str) -> list:
+                return model.encode([text])[0].tolist()
+            
+        except ImportError:
+            import random
+            def embed(text: str) -> list:
+                return [random.random() for _ in range(384)]
+            print("⚠️  WARNING: Using random embeddings (test only). Install sentence-transformers.")
+
+        query_embedding = embed(query)
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=top_k
+        )
+        chunks = []
+        for ids, metadatas, documents, distances in zip(results["ids"], results["metadatas"], results["documents"], results["distances"]):
+            for id, meta, doc, dist in zip(ids, metadatas, documents, distances):
+                chunks.append({
+                    "id": id,
+                    "text": doc,
+                    "source": meta.get("source", "unknown"),
+                    "score": 1 - dist,  # Assuming distance is cosine distance
+                })
         sources = list({c["source"] for c in chunks})
         return {
             "chunks": chunks,
             "sources": sources,
             "total_found": len(chunks),
         }
+
     except Exception as e:
         # Fallback: return mock data nếu ChromaDB chưa setup
         return {

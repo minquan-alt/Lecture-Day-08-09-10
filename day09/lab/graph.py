@@ -96,7 +96,7 @@ def supervisor_node(state: AgentState) -> AgentState:
     # - "P1", "escalation", "sla", "ticket" → retrieval_worker
     # - mã lỗi không rõ (ERR-XXX), không đủ context → human_review
     # - còn lại → retrieval_worker
-
+    
     route = "retrieval_worker"         # TODO: thay bằng logic thực
     route_reason = "default route"    # TODO: thay bằng lý do thực
     needs_tool = False
@@ -176,22 +176,21 @@ def human_review_node(state: AgentState) -> AgentState:
 # ─────────────────────────────────────────────
 
 # TODO Sprint 2: Uncomment sau khi implement workers
-# from workers.retrieval import run as retrieval_run
-# from workers.policy_tool import run as policy_tool_run
-# from workers.synthesis import run as synthesis_run
+from workers.retrieval import run as retrieval_run
+from workers.policy_tool import run as policy_tool_run
+from workers.synthesis import run as synthesis_run
 
 
 def retrieval_worker_node(state: AgentState) -> AgentState:
     """Wrapper gọi retrieval worker."""
     # TODO Sprint 2: Thay bằng retrieval_run(state)
+    retrieval_worker_state = retrieval_run(state)
     state["workers_called"].append("retrieval_worker")
     state["history"].append("[retrieval_worker] called")
 
     # Placeholder output để test graph chạy được
-    state["retrieved_chunks"] = [
-        {"text": "SLA P1: phản hồi 15 phút, xử lý 4 giờ.", "source": "sla_p1_2026.txt", "score": 0.92}
-    ]
-    state["retrieved_sources"] = ["sla_p1_2026.txt"]
+    state["retrieved_chunks"] = retrieval_worker_state["retrieved_chunks"]
+    state["retrieved_sources"] = retrieval_worker_state["retrieved_sources"]
     state["history"].append(f"[retrieval_worker] retrieved {len(state['retrieved_chunks'])} chunks")
     return state
 
@@ -203,12 +202,7 @@ def policy_tool_worker_node(state: AgentState) -> AgentState:
     state["history"].append("[policy_tool_worker] called")
 
     # Placeholder output
-    state["policy_result"] = {
-        "policy_applies": True,
-        "policy_name": "refund_policy_v4",
-        "exceptions_found": [],
-        "source": "policy_refund_v4.txt",
-    }
+    state["policy_result"] = policy_tool_run(state)["policy_result"]
     state["history"].append("[policy_tool_worker] policy check complete")
     return state
 
@@ -220,11 +214,12 @@ def synthesis_worker_node(state: AgentState) -> AgentState:
     state["history"].append("[synthesis_worker] called")
 
     # Placeholder output
+    synthesis_worker_state = synthesis_run(state)
     chunks = state.get("retrieved_chunks", [])
     sources = state.get("retrieved_sources", [])
-    state["final_answer"] = f"[PLACEHOLDER] Câu trả lời được tổng hợp từ {len(chunks)} chunks."
+    state["final_answer"] = f"[PLACEHOLDER] Câu trả lời được tổng hợp từ {len(chunks)} chunks.: {synthesis_worker_state['final_answer']}"
     state["sources"] = sources
-    state["confidence"] = 0.75
+    state["confidence"] = synthesis_worker_state["confidence"]
     state["history"].append(f"[synthesis_worker] answer generated, confidence={state['confidence']}")
     return state
 
@@ -337,4 +332,5 @@ if __name__ == "__main__":
         trace_file = save_trace(result)
         print(f"  Trace saved → {trace_file}")
 
-    print("\n✅ graph.py test complete. Implement TODO sections in Sprint 1 & 2.")
+    # print("\n✅ graph.py test complete. Implement TODO sections in Sprint 1 & 2.")
+    print("\n✅ graph.py test complete.")

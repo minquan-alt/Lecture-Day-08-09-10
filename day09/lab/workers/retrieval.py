@@ -17,6 +17,12 @@ Gọi độc lập để test:
 
 import os
 import sys
+from dotenv import load_dotenv
+from huggingface_hub import login
+
+login(token=os.getenv("HUGGINGFACE_TOKEN"))
+
+load_dotenv()
 
 # ─────────────────────────────────────────────
 # Worker Contract (xem contracts/worker_contracts.yaml)
@@ -34,31 +40,33 @@ def _get_embedding_fn():
     TODO Sprint 1: Implement dùng OpenAI hoặc Sentence Transformers.
     """
     # Option A: Sentence Transformers (offline, không cần API key)
+
     try:
         from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer("all-MiniLM-L6-v2")
+        model = SentenceTransformer("google/embeddinggemma-300m")
+
         def embed(text: str) -> list:
             return model.encode([text])[0].tolist()
         return embed
     except ImportError:
-        pass
-
-    # Option B: OpenAI (cần API key)
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        import random
         def embed(text: str) -> list:
-            resp = client.embeddings.create(input=text, model="text-embedding-3-small")
-            return resp.data[0].embedding
-        return embed
-    except ImportError:
-        pass
+            return [random.random() for _ in range(384)]
+        print("⚠️  WARNING: Using random embeddings (test only). Install sentence-transformers.")
+
+    # # Option B: OpenAI (cần API key)
+    # try:
+    #     from openai import OpenAI
+    #     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    #     def embed(text: str) -> list:
+    #         resp = client.embeddings.create(input=text, model="text-embedding-3-small")
+    #         return resp.data[0].embedding
+    #     return embed
+    # except ImportError:
+    #     pass
 
     # Fallback: random embeddings cho test (KHÔNG dùng production)
-    import random
-    def embed(text: str) -> list:
-        return [random.random() for _ in range(384)]
-    print("⚠️  WARNING: Using random embeddings (test only). Install sentence-transformers.")
+    
     return embed
 
 
@@ -68,16 +76,20 @@ def _get_collection():
     TODO Sprint 2: Đảm bảo collection đã được build từ Step 3 trong README.
     """
     import chromadb
-    client = chromadb.PersistentClient(path="./chroma_db")
+    client = chromadb.CloudClient(
+        api_key=os.getenv("CHROMA_API_KEY"),
+        tenant=os.getenv("CHROMA_TENANT"),
+        database=os.getenv("CHROMA_DATABASE")
+    )
     try:
-        collection = client.get_collection("day09_docs")
+        collection = client.get_collection(os.getenv("CHROMA_COLLECTION"))
     except Exception:
         # Auto-create nếu chưa có
         collection = client.get_or_create_collection(
-            "day09_docs",
+            os.getenv("CHROMA_COLLECTION"),
             metadata={"hnsw:space": "cosine"}
         )
-        print(f"⚠️  Collection 'day09_docs' chưa có data. Chạy index script trong README trước.")
+        print(f"⚠️  Collection '{os.getenv('CHROMA_COLLECTION')}' chưa có data. Chạy index script trong README trước.")
     return collection
 
 

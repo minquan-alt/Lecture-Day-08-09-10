@@ -17,6 +17,7 @@ Gọi độc lập để test:
 """
 
 import os
+import json
 
 WORKER_NAME = "synthesis_worker"
 
@@ -39,7 +40,10 @@ def _call_llm(messages: list) -> str:
     # Option A: OpenAI
     try:
         from openai import OpenAI
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        client = OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            base_url=os.getenv("BASE_URL")  # Thêm base_url hỗ trợ GitHub Models/cđ tương thích
+        )
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
@@ -47,7 +51,8 @@ def _call_llm(messages: list) -> str:
             max_tokens=500,
         )
         return response.choices[0].message.content
-    except Exception:
+    except Exception as e:
+        print(f"(!) Lỗi gọi OpenAI: {e}")
         pass
 
     # Option B: Gemini
@@ -65,8 +70,8 @@ def _call_llm(messages: list) -> str:
     return "[SYNTHESIS ERROR] Không thể gọi LLM. Kiểm tra API key trong .env."
 
 
-def _build_context(chunks: list, policy_result: dict) -> str:
-    """Xây dựng context string từ chunks và policy result."""
+def _build_context(chunks: list, policy_result: dict, mcp_tools: list = None) -> str:
+    """Xây dựng context string từ chunks, policy result và MCP tools."""
     parts = []
 
     if chunks:
@@ -81,6 +86,13 @@ def _build_context(chunks: list, policy_result: dict) -> str:
         parts.append("\n=== POLICY EXCEPTIONS ===")
         for ex in policy_result["exceptions_found"]:
             parts.append(f"- {ex.get('rule', '')}")
+
+    if mcp_tools:
+        parts.append("\n=== EXTERNAL DATA (MCP TOOLS) ===")
+        for tool in mcp_tools:
+            name = tool.get("tool")
+            output = tool.get("output")
+            parts.append(f"Tool: {name}\nResult: {json.dumps(output, ensure_ascii=False)}")
 
     if not parts:
         return "(Không có context)"
@@ -116,14 +128,14 @@ def _estimate_confidence(chunks: list, answer: str, policy_result: dict) -> floa
     return round(max(0.1, confidence), 2)
 
 
-def synthesize(task: str, chunks: list, policy_result: dict) -> dict:
+def synthesize(task: str, chunks: list, policy_result: dict, mcp_tools: list = None) -> dict:
     """
-    Tổng hợp câu trả lời từ chunks và policy context.
+    Tổng hợp câu trả lời từ chunks, policy context và dữ liệu MCP.
 
     Returns:
         {"answer": str, "sources": list, "confidence": float}
     """
-    context = _build_context(chunks, policy_result)
+    context = _build_context(chunks, policy_result, mcp_tools)
 
     # Build messages
     messages = [
@@ -156,6 +168,7 @@ def run(state: dict) -> dict:
     task = state.get("task", "")
     chunks = state.get("retrieved_chunks", [])
     policy_result = state.get("policy_result", {})
+    mcp_tools = state.get("mcp_tools_used", [])
 
     state.setdefault("workers_called", [])
     state.setdefault("history", [])
@@ -167,13 +180,14 @@ def run(state: dict) -> dict:
             "task": task,
             "chunks_count": len(chunks),
             "has_policy": bool(policy_result),
+            "mcp_tools_count": len(mcp_tools),
         },
         "output": None,
         "error": None,
     }
 
     try:
-        result = synthesize(task, chunks, policy_result)
+        result = synthesize(task, chunks, policy_result, mcp_tools)
         state["final_answer"] = result["answer"]
         state["sources"] = result["sources"]
         state["confidence"] = result["confidence"]

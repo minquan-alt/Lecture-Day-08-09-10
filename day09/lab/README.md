@@ -183,7 +183,7 @@ print(result["retrieved_chunks"])
 ```
 
 **Definition of Done:**
-- [ ] Mỗi worker test độc lập được (không cần graph)
+- [x] Mỗi worker test độc lập được (không cần graph)
 - [ ] Input/output của từng worker khớp với `contracts/worker_contracts.yaml`
 - [ ] Policy worker xử lý đúng ít nhất 1 exception case (Flash Sale hoặc digital product)
 - [ ] Synthesis worker trả về answer có citation `[1]`, không hallucinate

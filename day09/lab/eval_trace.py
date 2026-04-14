@@ -159,7 +159,7 @@ def run_grading_questions(questions_file: str = "data/grading_questions.json") -
 # 3. Analyze Traces
 # ─────────────────────────────────────────────
 
-def analyze_traces(traces_dir: str = "artifacts/traces") -> dict:
+def analyze_traces(traces_dir: str = f"artifacts/traces") -> dict:
     """
     Đọc tất cả trace files và tính metrics tổng hợp.
 
@@ -185,7 +185,7 @@ def analyze_traces(traces_dir: str = "artifacts/traces") -> dict:
 
     traces = []
     for fname in trace_files:
-        with open(os.path.join(traces_dir, fname)) as f:
+        with open(os.path.join(traces_dir, fname), encoding="utf-8") as f:
             traces.append(json.load(f))
 
     # Compute metrics
@@ -260,7 +260,7 @@ def compare_single_vs_multi(
     }
 
     if day08_results_file and os.path.exists(day08_results_file):
-        with open(day08_results_file) as f:
+        with open(day08_results_file, encoding="utf-8") as f:
             day08_baseline = json.load(f)
 
     comparison = {
