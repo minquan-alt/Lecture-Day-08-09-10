@@ -15,8 +15,12 @@ Gọi độc lập để test:
     python workers/retrieval.py
 """
 
-import os
+# change username github
+import os 
 import sys
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ─────────────────────────────────────────────
 # Worker Contract (xem contracts/worker_contracts.yaml)
@@ -30,54 +34,57 @@ DEFAULT_TOP_K = 3
 
 def _get_embedding_fn():
     """
-    Trả về embedding function.
-    TODO Sprint 1: Implement dùng OpenAI hoặc Sentence Transformers.
+    Trả về embedding function sử dụng model google/embeddinggemma-300m.
+    Đồng bộ với index.py của Lab 08.
     """
-    # Option A: Sentence Transformers (offline, không cần API key)
+    import os
+    from huggingface_hub import login
+    from sentence_transformers import SentenceTransformer
+
+    # Login Hugging Face để tải model Gemma
+    hf_token = os.getenv("HUGGINGFACE_TOKEN")
+    if hf_token:
+        login(token=hf_token)
+
     try:
-        from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer("all-MiniLM-L6-v2")
+        model = SentenceTransformer("google/embeddinggemma-300m")
         def embed(text: str) -> list:
             return model.encode([text])[0].tolist()
         return embed
-    except ImportError:
-        pass
-
-    # Option B: OpenAI (cần API key)
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    except Exception as e:
+        print(f"(!) Lỗi khi load model embedding: {e}")
+        # Fallback: random embeddings cho test (KHÔNG dùng production)
+        import random
         def embed(text: str) -> list:
-            resp = client.embeddings.create(input=text, model="text-embedding-3-small")
-            return resp.data[0].embedding
+            return [random.random() for _ in range(384)]
         return embed
-    except ImportError:
-        pass
-
-    # Fallback: random embeddings cho test (KHÔNG dùng production)
-    import random
-    def embed(text: str) -> list:
-        return [random.random() for _ in range(384)]
-    print("⚠️  WARNING: Using random embeddings (test only). Install sentence-transformers.")
-    return embed
 
 
 def _get_collection():
     """
-    Kết nối ChromaDB collection.
-    TODO Sprint 2: Đảm bảo collection đã được build từ Step 3 trong README.
+    Kết nối ChromaDB Cloud collection.
+    Sử dụng cấu hình Cloud từ Lab 08.
     """
     import chromadb
-    client = chromadb.PersistentClient(path="./chroma_db")
+    import os
+
+    api_key = os.getenv("CHROMA_API_KEY")
+    tenant = os.getenv("TENANT_ID")
+    collection_name = os.getenv("CHROMA_COLLECTION", "lab_08")
+
+    client = chromadb.CloudClient(
+        api_key=api_key,
+        tenant=tenant,
+        database='quang-ai'  # Theo cấu hình trong index.py
+    )
+
     try:
-        collection = client.get_collection("day09_docs")
-    except Exception:
-        # Auto-create nếu chưa có
-        collection = client.get_or_create_collection(
-            "day09_docs",
-            metadata={"hnsw:space": "cosine"}
-        )
-        print(f"⚠️  Collection 'day09_docs' chưa có data. Chạy index script trong README trước.")
+        collection = client.get_collection(collection_name)
+    except Exception as e:
+        print(f"(!) Không thể kết nối collection {collection_name}: {e}")
+        # Trả về collection mặc định hoặc báo lỗi
+        raise e
+
     return collection
 
 
@@ -195,7 +202,7 @@ if __name__ == "__main__":
     ]
 
     for query in test_queries:
-        print(f"\n▶ Query: {query}")
+        print(f"\nQuery: {query}")
         result = run({"task": query})
         chunks = result.get("retrieved_chunks", [])
         print(f"  Retrieved: {len(chunks)} chunks")
@@ -203,4 +210,4 @@ if __name__ == "__main__":
             print(f"    [{c['score']:.3f}] {c['source']}: {c['text'][:80]}...")
         print(f"  Sources: {result.get('retrieved_sources', [])}")
 
-    print("\n✅ retrieval_worker test done.")
+    print("\n[OK] retrieval_worker test done.")
