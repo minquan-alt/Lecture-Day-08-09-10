@@ -15,7 +15,8 @@ Gọi độc lập để test:
     python workers/retrieval.py
 """
 
-import os
+# change username github
+import os 
 import sys
 from dotenv import load_dotenv
 
