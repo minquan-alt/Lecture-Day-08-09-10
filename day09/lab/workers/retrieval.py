@@ -15,6 +15,8 @@ Gọi độc lập để test:
     python workers/retrieval.py
 """
 
+# commit lại do lỗi commit trước
+
 import os
 import sys
 
